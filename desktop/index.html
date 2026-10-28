@@ -53,9 +53,10 @@ aside.hide{display:none}#tog{position:absolute;right:8px;top:8px}
   </form>
 </aside>
 <script>
+const TOKEN='__RYAN_TOKEN__';
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 let job=null;
-const api=async(p,b)=>(await fetch(p,{method:b?'POST':'GET',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined})).json();
+const api=async(p,b)=>(await fetch(p,{method:b?'POST':'GET',headers:{'Content-Type':'application/json','X-Ryan-Token':TOKEN},body:b?JSON.stringify(b):undefined})).json();
 async function state(){
   const s=await api('/api/state');
   $('#agents').innerHTML=s.agents.map(a=>`<div class="a"><span>${esc(a.label)}</span><span class="dot" style="background:${a.status==='ready'?'#15803d':a.status==='not_installed'?'#b45309':'#64748b'}" title="${esc(a.status)}"></span></div>`).join('');
@@ -75,12 +76,14 @@ async function show(id){
   $('#act').innerHTML=b.map(([t,a])=>`<button class="sec" data-a="${a||''}">${t}</button>`).join('');
   $('#act').querySelectorAll('button').forEach(x=>x.onclick=async()=>{
     const a=x.dataset.a; if(!a){alert(j.plan?JSON.parse(j.plan).text:'Chưa có kế hoạch');return}
-    const r=await api('/api/'+a,{job_id:id}); if(a==='plan'&&!r.ok)alert('Lập kế hoạch thất bại, xem log'); if(a==='rollback')alert(JSON.stringify(r)); await state();});
+    let r=await api('/api/'+a,{job_id:id,confirm:false});
+    if(a==='approve'&&r.result==='needs_confirm'&&confirm('Công việc này có rủi ro cấp 3. Xác nhận duyệt?'))r=await api('/api/'+a,{job_id:id,confirm:true}); if(a==='plan'&&!r.ok)alert('Lập kế hoạch thất bại, xem log'); if(a==='rollback')alert(JSON.stringify(r)); await state();});
 }
 $('#f').onsubmit=async e=>{e.preventDefault();const r=await api('/api/new',{request:e.target.req.value,project:$('#proj').value||null});
   e.target.req.value='';await show(r.job_id);await state();};
 $('#pf').onsubmit=async e=>{e.preventDefault();await api('/api/project',Object.fromEntries(new FormData(e.target)));e.target.reset();state();};
 $('#tog').onclick=()=>{const s=$('#side');s.classList.toggle('hide');$('#tog').textContent=s.classList.contains('hide')?'Hiện':'Ẩn';};
-setInterval(()=>{if(job)show(job)},3000);setInterval(state,5000);state();
+setInterval(()=>{if(job)show(job)},3000);state();
+const ws=new WebSocket(`ws://${location.host}/ws?t=${TOKEN}`);ws.onmessage=()=>state();
 </script>
 </body></html>

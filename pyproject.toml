@@ -1,0 +1,12 @@
+[project]
+name = "ryan-ai-command-center"
+version = "0.1.0"
+description = "Điều phối AI qua Telegram và giao diện desktop (MVP)"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.110", "uvicorn>=0.29"]
+
+[project.optional-dependencies]
+dev = ["httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

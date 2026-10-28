@@ -1,9 +1,12 @@
 """Telegram bot (long polling, chỉ stdlib). Logic xử lý tách khỏi mạng để test được."""
 import json
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
+
+from quality.safety import redact, register_secret
 
 HELP = ("/new <yêu cầu> · /plan · /run · /status · /approve · /cancel · /review · /logs · "
         "/cost · /projects · /use <dự án> · /agents · /rollback")
@@ -11,10 +14,12 @@ HELP = ("/new <yêu cầu> · /plan · /run · /status · /approve · /cancel ·
 
 class Bot:
     def __init__(self, orch, db, token, allowed_ids, api=None):
+        register_secret(token)
         self.o, self.db, self.token = orch, db, token
         self.allowed = {int(x) for x in allowed_ids if str(x).strip()}
         self.api = api or self._api
         self.cur = {}      # chat_id -> job_id hiện tại
+        self.job_chat = {}  # job_id -> chat_id để gửi báo cáo về đúng nơi
         self.proj = {}     # chat_id -> project
         self.offset = 0
 
@@ -24,11 +29,16 @@ class Bot:
             return json.load(r)
 
     def send(self, chat, text, buttons=None):
-        text = text.replace(self.token, "***") if self.token else text
+        text = redact(text)
         p = {"chat_id": chat, "text": text[:4000]}
         if buttons:
             p["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
         return self.api("sendMessage", **p)
+
+    def notify(self, jid, text):
+        chat = self.job_chat.get(jid)
+        if chat:
+            self.send(chat, text)
 
     def authorized(self, uid):
         return int(uid) in self.allowed
@@ -37,16 +47,24 @@ class Bot:
     def handle(self, upd):
         if "callback_query" in upd:
             cq = upd["callback_query"]
-            uid, chat, text = cq["from"]["id"], cq["message"]["chat"]["id"], cq["data"]
-            if not self.authorized(uid):          # xác minh quyền cả với nút inline
-                self.api("answerCallbackQuery", callback_query_id=cq["id"], text="Không có quyền")
+            uid = (cq.get("from") or {}).get("id")
+            msg = cq.get("message") or {}
+            chat, text = (msg.get("chat") or {}).get("id"), cq.get("data", "")
+            if uid is None or chat is None or not self.authorized(uid):  # xác minh quyền cả với nút inline
+                if cq.get("id"):
+                    self.api("answerCallbackQuery", callback_query_id=cq["id"], text="Không có quyền")
                 return "denied"
+            if (msg.get("chat") or {}).get("type") != "private":
+                return "ignored"
             self.api("answerCallbackQuery", callback_query_id=cq["id"])
         elif "message" in upd and "text" in upd["message"]:
             m = upd["message"]
-            uid, chat, text = m["from"]["id"], m["chat"]["id"], m["text"].strip()
-            if not self.authorized(uid):
+            uid, chat = (m.get("from") or {}).get("id"), (m.get("chat") or {}).get("id")
+            text = m["text"].strip()
+            if uid is None or not self.authorized(uid):
                 return "denied"                   # im lặng, không lộ sự tồn tại của bot
+            if m["chat"].get("type") != "private":
+                return "ignored"                  # state theo chat riêng, không xử lý trong nhóm
         else:
             return "ignored"
         self.command(chat, text)
@@ -79,6 +97,7 @@ class Bot:
                 return self.send(chat, "Dùng: /new <yêu cầu>")
             jid = o.new_job(req, self.proj.get(chat), "telegram")
             self.cur[chat] = jid
+            self.job_chat[jid] = chat
             return self.send(chat, f"Đã tạo công việc {jid}. Bấm Lập kế hoạch.", [("Lập kế hoạch", f"/plan {jid}")])
         jid = self._jid(chat, arg)
         job = db.get_job(jid) if jid else None
@@ -88,17 +107,21 @@ class Bot:
             ok = o.plan(jid)
             j = db.get_job(jid)
             if ok:
-                return self.send(chat, f"Kế hoạch ({jid}):\n{json.loads(j['plan'])['text']}", [("Duyệt", f"/approve {jid}"), ("Hủy", f"/cancel {jid}")])
+                p = json.loads(j["plan"])
+                return self.send(chat, f"Kế hoạch ({jid}, cấp quyền {p['level']}):\n{p['text']}",
+                                 [("Duyệt", f"/approve {jid}"), ("Hủy", f"/cancel {jid}")])
             return self.send(chat, f"{j['status']}: {j['result']}")
         if cmd == "/approve":
-            if not o.approve(jid):
+            r = o.approve(jid, confirm="confirm" in arg.split())
+            if r == "needs_confirm":
+                return self.send(chat, "Cấp quyền 3 (rủi ro): gửi /approve " + jid + " confirm để xác nhận.")
+            if r != "approved":
                 return self.send(chat, "Không có kế hoạch nào đang chờ duyệt.")
             return self.send(chat, "Đã duyệt.", [("Chạy", f"/run {jid}")])
         if cmd == "/run":
             return self.send(chat, f"Chạy: {o.run(jid)}")
         if cmd == "/cancel":
-            o.cancel(jid)
-            return self.send(chat, "Đã hủy.")
+            return self.send(chat, "Đã hủy." if o.cancel(jid) else "Công việc đã kết thúc, không thể hủy.")
         if cmd in ("/status", "/review"):
             return self.send(chat, f"{jid}: {job['status']}\n{job['result'] or ''}")
         if cmd == "/logs":
@@ -112,7 +135,8 @@ class Bot:
             try:
                 for u in self.api("getUpdates", offset=self.offset, timeout=30).get("result", []):
                     self.offset = u["update_id"] + 1
-                    self.handle(u)
+                    # xử lý song song để /cancel không bị chặn bởi /plan đang chạy
+                    threading.Thread(target=self.handle, args=(u,), daemon=True).start()
             except Exception:
                 time.sleep(5)
 
@@ -120,4 +144,20 @@ class Bot:
 def from_env(orch, db):
     tok = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     ids = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
-    return Bot(orch, db, tok, ids) if tok and any(i.strip() for i in ids) else None
+    if not tok or not any(i.strip() for i in ids):
+        return None
+    return Bot(orch, db, tok, ids)
+
+
+class MockTelegram:
+    """Thay cho Telegram API khi MOCK_MODE: ghi lại tin đã gửi, không gọi mạng."""
+    def __init__(self):
+        self.sent = []
+
+    def __call__(self, method, **params):
+        self.sent.append({"method": method, **params})
+        return {"result": []}
+
+
+def mock_bot(orch, db, allowed="1"):
+    return Bot(orch, db, "mock-token", [allowed], api=MockTelegram())

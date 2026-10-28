@@ -16,7 +16,7 @@ class Fake:
     """Agent giả cho test: trả lời theo kịch bản, có thể ghi file vào workspace."""
     def __init__(self, name, replies, write=None, ok=True):
         self.name, self.replies, self.write, self.ok, self.calls = name, list(replies), write, ok, 0
-        self.enabled = True
+        self.enabled, self.label = True, name
 
     def status(self): return "ready"
     def cancel(self): pass
@@ -40,7 +40,10 @@ def make_repo():
     return d
 
 
-def setup(ad_overrides, test_cmd="true"):
+PY = sys.executable.replace("\\", "/")
+
+
+def setup(ad_overrides, test_cmd=f"{PY} -c pass"):
     cfg = load_config()
     db = DB(":memory:")
     repo = make_repo()
@@ -71,7 +74,7 @@ class T(unittest.TestCase):
         self.assertTrue(o.plan(jid))
         self.assertEqual(db.get_job(jid)["status"], "AWAITING_APPROVAL")
         self.assertEqual(o.run(jid), "not_approved")
-        self.assertTrue(o.approve(jid))
+        self.assertEqual(o.approve(jid), "approved")
         self.assertEqual(o.run(jid), "queued")
         self.assertEqual(wait(db, jid, {"DONE", "FAILED", "BLOCKED"}), "DONE")
         self.assertTrue((Path(repo) / "b.txt").exists())
@@ -110,7 +113,7 @@ class T(unittest.TestCase):
         o, db, _, _ = setup(ov, test_cmd="")
         db.kv_set("test_cmd:p", "")
         jid = o.new_job("x", "p"); o.plan(jid); o.approve(jid); o.run(jid)
-        self.assertNotEqual(wait(db, jid, {"DONE", "FAILED", "BLOCKED"}), "DONE")
+        self.assertEqual(wait(db, jid, {"DONE", "FAILED", "BLOCKED"}), "BLOCKED")
 
     def test_rollback_restores_checkpoint(self):
         ov = {"haiku": Fake("haiku", ["x"], write="b.txt"), "sonnet": Fake("sonnet", ["VERDICT: PASS"]),
@@ -123,14 +126,15 @@ class T(unittest.TestCase):
 
     def test_cancel(self):
         o, db, _, _ = setup({})
-        jid = o.new_job("x", "p"); o.cancel(jid)
+        jid = o.new_job("x", "p"); self.assertTrue(o.cancel(jid))
         self.assertEqual(db.get_job(jid)["status"], "CANCELLED")
 
     def test_helpers(self):
         self.assertEqual(parse_verdict("VERDICT: PASS\nok"), "PASS")
         self.assertEqual(parse_verdict("blah"), "UNKNOWN")
         self.assertEqual(safety.required_level("deploy production"), 3)
-        self.assertEqual(safety.redact("tok123456 x", ["tok123456"]), "*** x")
+        safety.register_secret("tok123456")
+        self.assertEqual(safety.redact("tok123456 x"), "*** x")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+{
+  "name": "ryan-ai-command-center",
+  "version": "0.1.0",
+  "description": "Desktop shell cho Ryan AI Command Center",
+  "private": true,
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --check desktop/main.js && node --check desktop/preload.js"
+  },
+  "devDependencies": {
+    "electron": "^45.1.0"
+  }
+}

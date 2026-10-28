@@ -20,8 +20,8 @@ def mk():
     return Bot(o, db, "SECRETTOKEN123", ["42"], api=api), db, sent
 
 
-def msg(uid, text): return {"update_id": 1, "message": {"from": {"id": uid}, "chat": {"id": uid}, "text": text}}
-def cb(uid, data): return {"update_id": 2, "callback_query": {"id": "c", "from": {"id": uid}, "message": {"chat": {"id": uid}}, "data": data}}
+def msg(uid, text): return {"update_id": 1, "message": {"from": {"id": uid}, "chat": {"id": uid, "type": "private"}, "text": text}}
+def cb(uid, data): return {"update_id": 2, "callback_query": {"id": "c", "from": {"id": uid}, "message": {"chat": {"id": uid, "type": "private"}}, "data": data}}
 
 
 class T(unittest.TestCase):

@@ -6,6 +6,8 @@ import time
 import uuid
 from pathlib import Path
 
+from quality.safety import redact
+
 DB_PATH = Path(__file__).resolve().parent / "ryan.db"
 
 SCHEMA = """
@@ -56,6 +58,7 @@ class DB:
         return [dict(r) for r in self._q("SELECT * FROM jobs ORDER BY created DESC LIMIT ?", (limit,))]
 
     def set_status(self, jid, status, **fields):
+        """Trả về False nếu công việc đã CANCELLED (không cho ghi đè trạng thái hủy)."""
         assert status in STATUSES, status
         sets, args = ["status=?", "updated=?"], [status, time.time()]
         for k in ("plan", "result", "project"):
@@ -63,12 +66,16 @@ class DB:
                 sets.append(f"{k}=?")
                 v = fields[k]
                 args.append(v if isinstance(v, str) or v is None else json.dumps(v, ensure_ascii=False))
-        self._q(f"UPDATE jobs SET {','.join(sets)} WHERE id=?", (*args, jid))
+        cur = self._q(f"UPDATE jobs SET {','.join(sets)} WHERE id=? AND (status!='CANCELLED' OR ?='CANCELLED')",
+                      (*args, jid, status))
+        if cur.rowcount == 0:
+            return False
         self.event(jid, "system", "status", status)
+        return True
 
     def event(self, jid, agent, kind, message):
         self._q("INSERT INTO events(job_id,ts,agent,kind,message) VALUES(?,?,?,?,?)",
-                (jid, time.time(), agent, kind, message))
+                (jid, time.time(), agent, kind, redact(message)))
 
     def events(self, jid, limit=200):
         return [dict(r) for r in self._q(
@@ -77,7 +84,7 @@ class DB:
     def add_run(self, jid, res):
         self._q("INSERT INTO runs(job_id,agent,role,ok,exit_code,duration,stdout,stderr,ts) VALUES(?,?,?,?,?,?,?,?,?)",
                 (jid, res["agent"], res.get("role"), int(res["ok"]), res["exit_code"],
-                 res["duration"], res["stdout"], res["stderr"], time.time()))
+                 res["duration"], redact(res["stdout"]), redact(res["stderr"]), time.time()))
 
     def runs(self, jid=None, limit=100):
         if jid:

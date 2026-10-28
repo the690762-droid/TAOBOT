@@ -1,10 +1,35 @@
-"""Adapter CLI chung: kiểm tra cài đặt, chạy subprocess có timeout, hủy, chuẩn hóa kết quả."""
+"""Adapter CLI chung: kiểm tra cài đặt, chạy subprocess có timeout, hủy, chuẩn hóa kết quả.
+Chạy được cả Windows và Linux: không dùng shell, dùng đường dẫn đầy đủ từ shutil.which."""
 import os
 import shutil
 import signal
 import subprocess
 import threading
 import time
+
+IS_WIN = os.name == "nt"
+
+
+def spawn_kwargs():
+    # Tạo nhóm tiến trình riêng để kill được cả cây tiến trình con.
+    if IS_WIN:
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def child_env():
+    # Không truyền token Telegram hay biến TELEGRAM_* cho tiến trình con (agent có thể bị prompt-inject).
+    return {k: v for k, v in os.environ.items() if not k.startswith("TELEGRAM_")}
+
+
+def kill_tree(proc):
+    try:
+        if IS_WIN:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 
 class CLIAdapter:
@@ -26,16 +51,18 @@ class CLIAdapter:
         return "ready" if self.installed() else "not_installed"
 
     def build(self, prompt):
-        return [a.replace("{prompt}", prompt) for a in self.command]
+        argv = [a.replace("{prompt}", prompt) for a in self.command]
+        # Trên Windows, CLI thường là claude.cmd: dùng đường dẫn đã resolve để Popen chạy được.
+        resolved = shutil.which(self.binary)
+        if resolved:
+            argv[0] = resolved
+        return argv
 
     def cancel(self):
         self._cancelled.set()
         p = self._proc
         if p and p.poll() is None:
-            try:
-                os.killpg(p.pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
+            kill_tree(p)
 
     def run(self, prompt, cwd, timeout=900, role=None):
         """Trả về dict chuẩn hóa: agent, role, ok, exit_code, duration, stdout, stderr, error."""
@@ -50,9 +77,11 @@ class CLIAdapter:
             return res
         self._cancelled.clear()
         try:
-            # start_new_session để có thể kill cả nhóm tiến trình khi timeout/hủy; không dùng shell.
-            self._proc = subprocess.Popen(self.build(prompt), cwd=cwd, stdout=subprocess.PIPE,
-                                          stderr=subprocess.PIPE, text=True, start_new_session=True)
+            self._proc = subprocess.Popen(self.build(prompt), cwd=str(cwd), stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                          errors="replace", env=child_env(), **spawn_kwargs())
+            if self._cancelled.is_set():
+                kill_tree(self._proc)
             out, err = self._proc.communicate(timeout=timeout)
             res.update(stdout=out, stderr=err, exit_code=self._proc.returncode)
             res["ok"] = self._proc.returncode == 0 and not self._cancelled.is_set()
@@ -61,10 +90,7 @@ class CLIAdapter:
             elif not res["ok"]:
                 res["error"] = f"exit_code_{self._proc.returncode}"
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(self._proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            kill_tree(self._proc)
             out, err = self._proc.communicate()
             res.update(stdout=out or "", stderr=err or "", error="timeout")
         except OSError as e:
