@@ -37,8 +37,11 @@ class Bot:
 
     def notify(self, jid, text):
         chat = self.job_chat.get(jid)
-        if chat:
-            self.send(chat, text)
+        try:
+            if chat:
+                self.send(chat, text)
+        except Exception:  # lỗi mạng Telegram không được làm hỏng công việc
+            pass
 
     def authorized(self, uid):
         return int(uid) in self.allowed
@@ -99,7 +102,7 @@ class Bot:
             self.cur[chat] = jid
             self.job_chat[jid] = chat
             return self.send(chat, f"Đã tạo công việc {jid}. Bấm Lập kế hoạch.", [("Lập kế hoạch", f"/plan {jid}")])
-        jid = self._jid(chat, arg)
+        jid = self._jid(chat, arg.split()[0] if arg else "")
         job = db.get_job(jid) if jid else None
         if not job:
             return self.send(chat, "Chưa có công việc. Dùng /new.")

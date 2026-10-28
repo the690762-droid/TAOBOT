@@ -40,9 +40,20 @@ class Orchestrator:
     def new_job(self, request, project=None, source="desktop"):
         return self.db.create_job(request, project, source)
 
+    def _notify(self, jid, msg):
+        try:
+            self.notify(jid, msg)
+        except Exception:  # Telegram lỗi mạng không được làm chết worker
+            pass
+
+    def _seal(self, jid, pdir):
+        """Ghi mốc HEAD và fingerprint để rollback biết tree có bị người dùng sửa sau lần chạy không."""
+        self.db.kv_set(f"post:{jid}", gitops.head(pdir) or "")
+        self.db.kv_set(f"fp:{jid}", gitops.fingerprint(pdir))
+
     def _say(self, jid, agent, kind, msg):
         self.db.event(jid, agent, kind, msg)
-        self.notify(jid, f"[{agent}] {msg}")
+        self._notify(jid, f"[{agent}] {msg}")
 
     def _agent(self, role, request=""):
         name = self.cfg["routes"][role]
@@ -75,7 +86,7 @@ class Orchestrator:
             self._say(jid, ag.name, "error", res["error"])
             return False
         level = safety.required_level(job["request"] + res["stdout"])
-        self.db.set_status(jid, "AWAITING_APPROVAL", plan={"text": res["stdout"], "level": level})
+        self.db.set_status(jid, "AWAITING_APPROVAL", plan={"text": safety.redact(res["stdout"]), "level": level})
         self._say(jid, ag.name, "plan", f"Kế hoạch sẵn sàng (cấp quyền {level}).")
         return True
 
@@ -113,11 +124,13 @@ class Orchestrator:
         job = self.db.get_job(jid)
         if not job or job["status"] not in TERMINAL:
             return {"ok": False, "error": "job_still_active"}
-        ck, post = self.db.kv_get(f"ckpt:{jid}"), self.db.kv_get(f"post:{jid}")
+        ck, post, fp = (self.db.kv_get(f"{k}:{jid}") for k in ("ckpt", "post", "fp"))
         pdir = self._project_dir(job)
-        if not ck or not post or not pdir:
+        if not ck or not post or not fp or not pdir:
             return {"ok": False, "error": "no_checkpoint"}
-        return gitops.rollback(pdir, ck, post)
+        if any(j["id"] != jid and j["status"] in ACTIVE for j in self.db.list_jobs(500) if j["project"] == job["project"]):
+            return {"ok": False, "error": "another_job_active_in_project"}
+        return gitops.rollback(pdir, ck, post, fp)
 
     # ---------- worker ----------
     def _loop(self):
@@ -132,7 +145,7 @@ class Orchestrator:
                 self.db.set_status(jid, "FAILED", result=f"Lỗi nội bộ: {e!r}")
             finally:
                 job = self.db.get_job(jid)
-                self.notify(jid, f"Kết thúc: {job['status']}. {job['result'] or ''}")
+                self._notify(jid, f"Kết thúc: {job['status']}. {job['result'] or ''}")
                 with self.lock:
                     self.current = None
 
@@ -157,9 +170,9 @@ class Orchestrator:
     def _save_artifacts(self, jid, diff_text):
         d = ARTIFACTS / jid
         d.mkdir(parents=True, exist_ok=True)
-        (d / "diff.patch").write_text(diff_text, encoding="utf-8")
+        (d / "diff.patch").write_text(safety.redact(diff_text), encoding="utf-8")
         log = "\n".join(f"{e['agent']}/{e['kind']}: {e['message']}" for e in self.db.events(jid, 500))
-        (d / "log.txt").write_text(log, encoding="utf-8")
+        (d / "log.txt").write_text(safety.redact(log), encoding="utf-8")
 
     def _execute(self, jid):
         job = self.db.get_job(jid)
@@ -187,6 +200,7 @@ class Orchestrator:
         for rnd in range(lim["max_fix_rounds"] + 1):
             res = ex.run(task, pdir, lim["timeout_sec"], "code")
             self.db.add_run(jid, res)
+            self._seal(jid, pdir)
             if self._stopped(jid):
                 return
             if not res["ok"]:
@@ -218,8 +232,7 @@ class Orchestrator:
                       f"Yêu cầu: {job['request']}\nDiff:\n{gitops.diff(pdir, ck['tag'])[-12000:]}",
                       pdir, lim["timeout_sec"], "verify")
         self.db.add_run(jid, vres)
-        post = gitops.head(pdir)
-        self.db.kv_set(f"post:{jid}", post or "")
+        self._seal(jid, pdir)
         files = gitops.changed_files(pdir, ck["tag"])
         self._save_artifacts(jid, gitops.diff(pdir, ck["tag"]))
         if self._stopped(jid):

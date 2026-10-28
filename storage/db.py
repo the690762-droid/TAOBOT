@@ -46,7 +46,7 @@ class DB:
         jid = uuid.uuid4().hex[:8]
         now = time.time()
         self._q("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?)",
-                (jid, request, project, "NEW", None, source, now, now, None))
+                (jid, redact(request), project, "NEW", None, source, now, now, None))
         self.event(jid, "system", "created", request)
         return jid
 
@@ -65,7 +65,9 @@ class DB:
             if k in fields:
                 sets.append(f"{k}=?")
                 v = fields[k]
-                args.append(v if isinstance(v, str) or v is None else json.dumps(v, ensure_ascii=False))
+                if isinstance(v, dict):
+                    v = json.dumps(v, ensure_ascii=False)
+                args.append(redact(v) if isinstance(v, str) else v)
         cur = self._q(f"UPDATE jobs SET {','.join(sets)} WHERE id=? AND (status!='CANCELLED' OR ?='CANCELLED')",
                       (*args, jid, status))
         if cur.rowcount == 0:

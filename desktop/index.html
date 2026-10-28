@@ -54,7 +54,7 @@ aside.hide{display:none}#tog{position:absolute;right:8px;top:8px}
 </aside>
 <script>
 const TOKEN='__RYAN_TOKEN__';
-const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let job=null;
 const api=async(p,b)=>(await fetch(p,{method:b?'POST':'GET',headers:{'Content-Type':'application/json','X-Ryan-Token':TOKEN},body:b?JSON.stringify(b):undefined})).json();
 async function state(){

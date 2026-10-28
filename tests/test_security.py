@@ -119,11 +119,34 @@ class States(unittest.TestCase):
         jid = o.new_job("x", "p")
         ck = gitops.checkpoint(repo, jid)
         db.kv_set(f"ckpt:{jid}", ck["tag"]); db.kv_set(f"post:{jid}", ck["commit"])
+        db.kv_set(f"fp:{jid}", gitops.fingerprint(repo))
         (Path(repo) / "n.txt").write_text("user work")
         subprocess_commit(repo)
         db.set_status(jid, "DONE")
         self.assertEqual(o.rollback(jid)["error"], "head_changed_since_run")
         self.assertTrue((Path(repo) / "n.txt").exists())
+
+    def test_rollback_refused_when_user_edited_after_run(self):
+        c, db, o, repo = mk()
+        jid = o.new_job("x", "p")
+        ck = gitops.checkpoint(repo, jid)
+        db.kv_set(f"ckpt:{jid}", ck["tag"]); db.kv_set(f"post:{jid}", ck["commit"])
+        (Path(repo) / "agent.txt").write_text("agent change")
+        db.kv_set(f"fp:{jid}", gitops.fingerprint(repo))
+        (Path(repo) / "agent.txt").write_text("user edit after run")
+        db.set_status(jid, "DONE")
+        self.assertEqual(o.rollback(jid)["error"], "working_tree_changed_since_run")
+        self.assertEqual((Path(repo) / "agent.txt").read_text(), "user edit after run")
+
+    def test_env_values_registered_as_secrets(self):
+        from backend.config import load_env
+        import os
+        p = Path(tempfile.mkdtemp()) / ".env"
+        p.write_text('export OTHER_KEY="sk-live-abcdef123"\n', encoding="utf-8")
+        load_env(p)
+        self.assertEqual(safety.redact("leak sk-live-abcdef123"), "leak ***")
+        self.assertEqual(os.environ.get("OTHER_KEY"), "sk-live-abcdef123")
+        os.environ.pop("OTHER_KEY", None)
 
 
 def subprocess_commit(repo):

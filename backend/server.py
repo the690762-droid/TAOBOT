@@ -4,6 +4,7 @@ bắt buộc Content-Type JSON, giới hạn kích thước body. Chỉ bind 127
 import asyncio
 import json
 import secrets
+from hmac import compare_digest
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -38,18 +39,23 @@ def create_app(o, db, bot=None, mock=False, token=None):
         if origin and origin != f"http://{host}":            # chỉ cho phép cùng nguồn
             return JSONResponse({"error": "bad_origin"}, 403)
         if request.url.path.startswith("/api/"):
-            if request.headers.get("x-ryan-token") != token:
+            if not compare_digest(request.headers.get("x-ryan-token", ""), token):
                 return JSONResponse({"error": "unauthorized"}, 401)
             if request.method == "POST":
                 if not request.headers.get("content-type", "").startswith("application/json"):
                     return JSONResponse({"error": "content_type_must_be_json"}, 415)
-                if int(request.headers.get("content-length", "0") or 0) > MAX_BODY:
+                try:
+                    too_big = int(request.headers.get("content-length", "0") or 0) > MAX_BODY
+                except ValueError:
+                    return JSONResponse({"error": "bad_content_length"}, 400)
+                if too_big:
                     return JSONResponse({"error": "body_too_large"}, 413)
         return await call_next(request)
 
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return UI.read_text(encoding="utf-8").replace("__RYAN_TOKEN__", token)
+        return HTMLResponse(UI.read_text(encoding="utf-8").replace("__RYAN_TOKEN__", token),
+                            headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY"})
 
     @app.get("/api/state")
     def state():

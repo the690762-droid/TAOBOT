@@ -10,8 +10,15 @@ def mock_mode():
 
 
 def load_env(path=ROOT / ".env"):
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+    from quality.safety import register_secret
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):]
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            v = v.strip().strip('"').strip("'")
+            os.environ.setdefault(k.strip(), v)
+            register_secret(v)  # mọi giá trị trong .env đều bị che khi ghi log/gửi

@@ -1,4 +1,5 @@
 """Checkpoint / diff / rollback bằng git. Không ghi đè thay đổi chưa commit của người dùng."""
+import hashlib
 import subprocess
 
 
@@ -39,12 +40,20 @@ def changed_files(cwd, tag):
     return [l for l in _git(cwd, "diff", "--name-only", tag).stdout.splitlines() if l]
 
 
-def rollback(cwd, tag, expect_head):
+def fingerprint(cwd):
+    """Băm nội dung thay đổi hiện tại (đã gồm file mới). Dùng để biết người dùng có sửa sau lần chạy không."""
+    _git(cwd, "add", "-N", ".")
+    return hashlib.sha256(_git(cwd, "diff").stdout.encode("utf-8")).hexdigest()
+
+
+def rollback(cwd, tag, expect_head, expect_fp):
     """Chỉ khôi phục khi HEAD vẫn là commit sau lần chạy; dọn file mới trong thư mục dự án."""
     if _git(cwd, "rev-parse", "--verify", tag).returncode != 0:
         return {"ok": False, "error": "checkpoint_not_found"}
     if head(cwd) != expect_head:
         return {"ok": False, "error": "head_changed_since_run"}
+    if fingerprint(cwd) != expect_fp:
+        return {"ok": False, "error": "working_tree_changed_since_run"}
     r = _git(cwd, "reset", "--hard", tag)
     c = _git(cwd, "clean", "-fd", "--", ".")
     return {"ok": r.returncode == 0 and c.returncode == 0, "error": r.stderr.strip() or c.stderr.strip() or None}

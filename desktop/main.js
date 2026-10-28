@@ -40,7 +40,10 @@ function startBackend() {
 async function createWindow() {
   startBackend();
   const win = new BrowserWindow({ width: 1200, height: 800, minWidth: 480, minHeight: 500, title: "Ryan AI Command Center" });
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
   try {
     await waitForBackend();
     await win.loadURL(`http://127.0.0.1:${PORT}/`);
