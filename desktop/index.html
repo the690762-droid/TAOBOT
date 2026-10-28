@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ryan AI Command Center</title>
+<style>
+:root{--navy:#0f1f3d;--blue:#2563eb;--bg:#f5f7fb;--fg:#1b2433;--muted:#6b7587;--line:#dfe4ee;--ok:#15803d;--warn:#b45309;--bad:#b91c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1322;--fg:#e6ebf5;--muted:#8d99b0;--line:#22304a}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg);display:flex;height:100vh}
+nav{width:200px;background:var(--navy);color:#dbe4f5;padding:16px;overflow:auto;flex-shrink:0}
+nav h1{font-size:15px;margin:0 0 16px}nav .s{font-size:11px;text-transform:uppercase;opacity:.6;margin:16px 0 6px}
+nav .a{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#64748b}
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+#chat{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.m{max-width:720px;padding:10px 12px;border-radius:8px;background:#fff;border:1px solid var(--line);white-space:pre-wrap}
+.m.me{align-self:flex-end;background:var(--blue);color:#fff;border-color:var(--blue)}
+form{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);background:var(--bg)}
+input,select,textarea{font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+input[name=req]{flex:1;min-width:0}
+button{font:inherit;padding:8px 12px;border:0;border-radius:6px;background:var(--blue);color:#fff;cursor:pointer}
+button.sec{background:transparent;color:var(--blue);border:1px solid var(--blue)}button:disabled{opacity:.5}
+aside{width:280px;border-left:1px solid var(--line);padding:16px;overflow:auto;flex-shrink:0;background:var(--bg)}
+aside.hide{display:none}#tog{position:absolute;right:8px;top:8px}
+.bar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.st{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line)}
+@media (max-width:760px){body{flex-direction:column;height:auto}nav{width:auto}aside{width:auto;border-left:0;border-top:1px solid var(--line)}}
+</style></head>
+<body>
+<nav>
+  <h1>Ryan AI Command Center</h1>
+  <div class="s">Điều hướng</div>
+  <div>Trò chuyện · Công việc · Dự án · Lịch sử · Cài đặt</div>
+  <div class="s">Agent</div>
+  <div id="agents">Đang tải…</div>
+  <div class="s">Telegram</div>
+  <div id="tg">—</div>
+</nav>
+<main>
+  <div id="chat"></div>
+  <form id="f">
+    <select id="proj"></select>
+    <input name="req" placeholder="Nhập yêu cầu bằng ngôn ngữ tự nhiên…" autocomplete="off" required>
+    <button>Gửi</button>
+  </form>
+  <div style="padding:0 12px 12px"><div class="bar" id="act"></div></div>
+</main>
+<aside id="side">
+  <button class="sec" id="tog">Ẩn</button>
+  <div class="s">Công việc hiện tại</div><div id="cur">Chưa có</div>
+  <div class="s">Hoạt động gần đây</div><div id="ev"></div>
+  <div class="s">Thêm dự án</div>
+  <form id="pf" style="flex-direction:column;padding:0;border:0;background:none">
+    <input name="name" placeholder="Tên dự án" required><input name="path" placeholder="Đường dẫn thư mục (git)" required><button class="sec">Lưu dự án</button>
+  </form>
+</aside>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+let job=null;
+const api=async(p,b)=>(await fetch(p,{method:b?'POST':'GET',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined})).json();
+async function state(){
+  const s=await api('/api/state');
+  $('#agents').innerHTML=s.agents.map(a=>`<div class="a"><span>${esc(a.label)}</span><span class="dot" style="background:${a.status==='ready'?'#15803d':a.status==='not_installed'?'#b45309':'#64748b'}" title="${esc(a.status)}"></span></div>`).join('');
+  $('#proj').innerHTML=s.projects.map(p=>`<option>${esc(p.name)}</option>`).join('')||'<option value="">(chưa có dự án)</option>';
+  if(job)await show(job);
+}
+async function show(id){
+  job=id;const d=await api('/api/job/'+id);const j=d.job;
+  $('#cur').innerHTML=`<b>${esc(j.id)}</b> <span class="st">${esc(j.status)}</span><p>${esc(j.request)}</p><p>${esc(j.result||'')}</p>`;
+  $('#ev').innerHTML=d.events.slice(-15).map(e=>`<div>${esc(e.agent)}/${esc(e.kind)}: ${esc(e.message)}</div>`).join('');
+  const b=[];
+  if(j.status==='NEW'||j.status==='BLOCKED')b.push(['Lập kế hoạch','plan']);
+  if(j.status==='AWAITING_APPROVAL')b.push(['Duyệt','approve'],['Xem kế hoạch',null]);
+  if(j.status==='APPROVED')b.push(['Chạy','run']);
+  if(['RUNNING','REVIEWING','PLANNING'].includes(j.status))b.push(['Dừng','cancel']);
+  if(j.status!=='NEW')b.push(['Khôi phục checkpoint','rollback']);
+  $('#act').innerHTML=b.map(([t,a])=>`<button class="sec" data-a="${a||''}">${t}</button>`).join('');
+  $('#act').querySelectorAll('button').forEach(x=>x.onclick=async()=>{
+    const a=x.dataset.a; if(!a){alert(j.plan?JSON.parse(j.plan).text:'Chưa có kế hoạch');return}
+    const r=await api('/api/'+a,{job_id:id}); if(a==='plan'&&!r.ok)alert('Lập kế hoạch thất bại, xem log'); if(a==='rollback')alert(JSON.stringify(r)); await state();});
+}
+$('#f').onsubmit=async e=>{e.preventDefault();const r=await api('/api/new',{request:e.target.req.value,project:$('#proj').value||null});
+  e.target.req.value='';await show(r.job_id);await state();};
+$('#pf').onsubmit=async e=>{e.preventDefault();await api('/api/project',Object.fromEntries(new FormData(e.target)));e.target.reset();state();};
+$('#tog').onclick=()=>{const s=$('#side');s.classList.toggle('hide');$('#tog').textContent=s.classList.contains('hide')?'Hiện':'Ẩn';};
+setInterval(()=>{if(job)show(job)},3000);setInterval(state,5000);state();
+</script>
+</body></html>

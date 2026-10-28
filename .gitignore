@@ -1,0 +1,10 @@
+.env
+*.db
+__pycache__/
+node_modules/
+logs/*
+!logs/.gitkeep
+workspace/*
+!workspace/.gitkeep
+artifacts/*
+!artifacts/screenshots/.gitkeep

@@ -1,0 +1,88 @@
+{
+  "_note": "Lệnh CLI dưới đây là mẫu chưa được xác minh trên máy bạn. Chạy `python -m backend.cli agents` để kiểm tra CLI có cài không, rồi sửa 'command' cho đúng theo `--help` của công cụ. {prompt} được truyền như một đối số riêng (không qua shell). Tuyến hiện tại: Haiku là executor chính, Sonnet rà soát lỗi và bảo mật.",
+  "routes": {
+    "plan": "antigravity",
+    "code": "haiku",
+    "small": "haiku",
+    "review": "sonnet",
+    "hard": "opus",
+    "verify": "claude_code"
+  },
+  "limits": {
+    "timeout_sec": 900,
+    "max_fix_rounds": 3
+  },
+  "agents": {
+    "antigravity": {
+      "label": "Antigravity — Lập kế hoạch",
+      "enabled": true,
+      "binary": "antigravity",
+      "command": [
+        "antigravity",
+        "{prompt}"
+      ],
+      "fallback": null
+    },
+    "opencode": {
+      "label": "OpenCode — Lập trình chính",
+      "enabled": true,
+      "binary": "opencode",
+      "command": [
+        "opencode",
+        "run",
+        "{prompt}"
+      ],
+      "fallback": null
+    },
+    "haiku": {
+      "label": "Haiku — Việc nhỏ",
+      "enabled": true,
+      "binary": "claude",
+      "command": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--model",
+        "haiku"
+      ],
+      "fallback": null
+    },
+    "sonnet": {
+      "label": "Sonnet — Rà soát lỗi",
+      "enabled": true,
+      "binary": "claude",
+      "command": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--model",
+        "sonnet"
+      ],
+      "fallback": null
+    },
+    "opus": {
+      "label": "Opus — Lỗi phức tạp",
+      "enabled": true,
+      "binary": "claude",
+      "command": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--model",
+        "opus"
+      ],
+      "fallback": null
+    },
+    "claude_code": {
+      "label": "Claude Code — Kiểm định cuối",
+      "enabled": true,
+      "binary": "claude",
+      "command": [
+        "claude",
+        "-p",
+        "{prompt}"
+      ],
+      "fallback": null
+    }
+  }
+}
