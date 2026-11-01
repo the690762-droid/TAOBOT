@@ -10,3 +10,4 @@ workspace/*
 artifacts/*
 !artifacts/screenshots/.gitkeep
 !artifacts/.gitkeep
+.venv/
