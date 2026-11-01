@@ -59,7 +59,11 @@ class Orchestrator:
         name = self.cfg["routes"][role]
         if role == "code" and any(h in request.lower() for h in SMALL_HINTS):
             name = self.cfg["routes"]["small"]
-        return self.ad[name]
+        agent = self.ad[name]
+        fb = self.cfg["agents"][name].get("fallback")  # chỉ đổi khi config cho phép
+        if fb and agent.status() in ("not_installed", "disabled") and self.ad[fb].status() in ("ready", "mock"):
+            return self.ad[fb]
+        return agent
 
     def _project_dir(self, job):
         for p in self.db.projects():

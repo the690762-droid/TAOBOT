@@ -35,15 +35,11 @@ class Flow13(unittest.TestCase):
         r = c.post("/api/mock/telegram", json={"user_id": 1, "text": "thêm tính năng"}, headers=H).json()
         jid = db.list_jobs()[0]["id"]
         self.assertEqual(r["result"], "ok")
-        # 4-5: Antigravity lập kế hoạch và lưu kế hoạch (mock plan)
-        r = c.post("/api/mock/telegram", json={"user_id": 1, "callback": f"/plan {jid}"}, headers=H).json()
+        # 4-5: tin nhắn tự nhiên đã lập kế hoạch ngay và gửi kèm nút Duyệt
         self.assertEqual(db.get_job(jid)["status"], "AWAITING_APPROVAL")
         self.assertTrue(any("Kế hoạch" in m.get("text", "") for m in r["sent"]))
-        # 6: duyệt
+        # 6-12: bấm Duyệt -> chạy tự động: executor, test, review, kiểm định, lưu diff/log
         c.post("/api/mock/telegram", json={"user_id": 1, "callback": f"/approve {jid}"}, headers=H)
-        self.assertEqual(db.get_job(jid)["status"], "APPROVED")
-        # 7-12: chạy executor (Haiku), test, review (Sonnet), kiểm định, lưu diff/log
-        c.post("/api/mock/telegram", json={"user_id": 1, "callback": f"/run {jid}"}, headers=H)
         end = time.time() + 20
         while db.get_job(jid)["status"] not in ("DONE", "FAILED", "BLOCKED") and time.time() < end:
             time.sleep(0.05)
@@ -52,8 +48,7 @@ class Flow13(unittest.TestCase):
         self.assertTrue((Path(repo) / "feature.txt").exists())
         self.assertIn("feature.txt", (ARTIFACTS / jid / "diff.patch").read_text(encoding="utf-8"))
         # 13: báo cáo về Telegram và trạng thái qua API
-        self.assertTrue(any("Kết thúc: DONE" in m.get("text", "") for m in bot.api.sent) or
-                        any("Kết thúc: DONE" in str(x) for x in bot.api.sent))
+        self.assertTrue(any("Kết thúc: DONE" in str(x) for x in bot.api.sent))
         st = c.get(f"/api/job/{jid}", headers=H).json()
         self.assertEqual(st["job"]["status"], "DONE")
         self.assertEqual(c.post("/api/rollback", json={"job_id": jid}, headers=H).json()["error"], None)

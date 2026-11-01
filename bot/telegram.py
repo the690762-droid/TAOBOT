@@ -8,8 +8,8 @@ import urllib.request
 
 from quality.safety import redact, register_secret
 
-HELP = ("/new <yêu cầu> · /plan · /run · /status · /approve · /cancel · /review · /logs · "
-        "/cost · /projects · /use <dự án> · /agents · /rollback")
+WELCOME = ("Gửi yêu cầu bằng tiếng Việt hoặc tiếng Anh, tôi sẽ lập kế hoạch và chờ bạn duyệt.\n"
+           "Lệnh: /projects, /use <dự án>, /status, /logs, /cancel, /rollback, /agents")
 
 
 class Bot:
@@ -76,18 +76,39 @@ class Bot:
     def _jid(self, chat, arg=""):
         return arg or self.cur.get(chat)
 
+    def _default_project(self, chat):
+        if self.proj.get(chat):
+            return self.proj[chat]
+        names = [p["name"] for p in self.db.projects()]
+        return names[0] if len(names) == 1 else None
+
+    def _plan_reply(self, chat, jid):
+        ok = self.o.plan(jid)
+        j = self.db.get_job(jid)
+        if not ok:
+            return self.send(chat, f"Chưa lập được kế hoạch: {j['result'] or j['status']}")
+        p = json.loads(j["plan"])
+        if p["level"] >= 3:
+            buttons = [("Xác nhận duyệt ⚠️", f"/approve {jid} confirm"), ("Hủy ✖", f"/cancel {jid}")]
+            note = "Yêu cầu có rủi ro cấp 3. Chỉ duyệt khi bạn chắc chắn."
+        else:
+            buttons = [("Duyệt ✅", f"/approve {jid}"), ("Hủy ✖", f"/cancel {jid}")]
+            note = "Bấm Duyệt để tôi chạy."
+        return self.send(chat, f"Kế hoạch {jid}:\n\n{p['text']}\n\n{note}", buttons)
+
     def command(self, chat, text):
         cmd, _, arg = text.partition(" ")
         cmd, arg = cmd.lower().split("@")[0], arg.strip()
         o, db = self.o, self.db
-        if cmd == "/start" or cmd == "/help":
-            return self.send(chat, HELP)
+        if cmd in ("/start", "/help"):
+            return self.send(chat, WELCOME)
         if cmd == "/projects":
             ps = db.projects()
-            return self.send(chat, "\n".join(f"{p['name']} — {p['path']}" for p in ps) or "Chưa có dự án nào. Thêm trong giao diện desktop.")
+            return self.send(chat, "\n".join(f"{p['name']}: {p['path']}" for p in ps)
+                             or "Chưa có dự án. Thêm dự án trong giao diện desktop.")
         if cmd == "/use":
             if arg not in {p["name"] for p in db.projects()}:
-                return self.send(chat, "Dự án không tồn tại.")
+                return self.send(chat, "Dự án không tồn tại. Xem /projects.")
             self.proj[chat] = arg
             return self.send(chat, f"Đã chọn dự án: {arg}")
         if cmd == "/agents":
@@ -97,41 +118,38 @@ class Bot:
         if cmd == "/new" or not cmd.startswith("/"):
             req = arg if cmd == "/new" else text
             if not req:
-                return self.send(chat, "Dùng: /new <yêu cầu>")
-            jid = o.new_job(req, self.proj.get(chat), "telegram")
-            self.cur[chat] = jid
-            self.job_chat[jid] = chat
-            return self.send(chat, f"Đã tạo công việc {jid}. Bấm Lập kế hoạch.", [("Lập kế hoạch", f"/plan {jid}")])
+                return self.send(chat, "Gửi yêu cầu bạn muốn tôi làm.")
+            jid = o.new_job(req, self._default_project(chat), "telegram")
+            self.cur[chat], self.job_chat[jid] = jid, chat
+            return self._plan_reply(chat, jid)
         jid = self._jid(chat, arg.split()[0] if arg else "")
         job = db.get_job(jid) if jid else None
         if not job:
-            return self.send(chat, "Chưa có công việc. Dùng /new.")
+            return self.send(chat, "Chưa có công việc nào. Gửi yêu cầu để bắt đầu.")
         if cmd == "/plan":
-            ok = o.plan(jid)
-            j = db.get_job(jid)
-            if ok:
-                p = json.loads(j["plan"])
-                return self.send(chat, f"Kế hoạch ({jid}, cấp quyền {p['level']}):\n{p['text']}",
-                                 [("Duyệt", f"/approve {jid}"), ("Hủy", f"/cancel {jid}")])
-            return self.send(chat, f"{j['status']}: {j['result']}")
+            return self._plan_reply(chat, jid)
         if cmd == "/approve":
             r = o.approve(jid, confirm="confirm" in arg.split())
             if r == "needs_confirm":
-                return self.send(chat, "Cấp quyền 3 (rủi ro): gửi /approve " + jid + " confirm để xác nhận.")
+                return self.send(chat, "Yêu cầu có rủi ro cấp 3. Bấm Xác nhận duyệt để tiếp tục.",
+                                 [("Xác nhận duyệt ⚠️", f"/approve {jid} confirm"), ("Hủy ✖", f"/cancel {jid}")])
             if r != "approved":
-                return self.send(chat, "Không có kế hoạch nào đang chờ duyệt.")
-            return self.send(chat, "Đã duyệt.", [("Chạy", f"/run {jid}")])
+                return self.send(chat, "Công việc này không ở trạng thái chờ duyệt.")
+            o.run(jid)
+            return self.send(chat, f"Đang chạy {jid}. Tôi sẽ báo khi xong.", [("Hủy ✖", f"/cancel {jid}")])
         if cmd == "/run":
             return self.send(chat, f"Chạy: {o.run(jid)}")
         if cmd == "/cancel":
             return self.send(chat, "Đã hủy." if o.cancel(jid) else "Công việc đã kết thúc, không thể hủy.")
         if cmd in ("/status", "/review"):
-            return self.send(chat, f"{jid}: {job['status']}\n{job['result'] or ''}")
+            return self.send(chat, f"{jid}: {job['status']}\n{job['result'] or ''}".strip())
         if cmd == "/logs":
-            return self.send(chat, "\n".join(f"{e['agent']}/{e['kind']}: {e['message']}" for e in db.events(jid, 20)) or "Không có log.")
+            return self.send(chat, "\n".join(f"{e['agent']}/{e['kind']}: {e['message']}" for e in db.events(jid, 20))
+                             or "Chưa có log.")
         if cmd == "/rollback":
-            return self.send(chat, f"Rollback: {o.rollback(jid)}")
-        return self.send(chat, HELP)
+            r = o.rollback(jid)
+            return self.send(chat, "Đã khôi phục checkpoint." if r.get("ok") else f"Không khôi phục được: {r.get('error')}")
+        return self.send(chat, WELCOME)
 
     def poll_forever(self):
         while True:

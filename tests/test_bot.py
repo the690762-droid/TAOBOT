@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -49,6 +50,29 @@ class T(unittest.TestCase):
         b, db, sent = mk()
         b.send(42, "token là SECRETTOKEN123")
         self.assertNotIn("SECRETTOKEN123", sent[-1][1]["text"])
+
+    def test_natural_message_plans_with_buttons(self):
+        b, db, sent = mk()
+        b.handle(msg(42, "/use p"))
+        b.handle(msg(42, "thêm một file mới"))
+        jid = db.list_jobs()[0]["id"]
+        self.assertEqual(db.get_job(jid)["status"], "AWAITING_APPROVAL")
+        card = sent[-1][1]
+        self.assertIn("Kế hoạch", card["text"])
+        labels = [b_["text"] for row in card["reply_markup"]["inline_keyboard"] for b_ in row]
+        self.assertEqual(labels, ["Duyệt ✅", "Hủy ✖"])
+        self.assertNotIn("parse_mode", card)
+
+    def test_level3_plan_asks_confirmation(self):
+        b, db, sent = mk()
+        b.handle(msg(42, "/use p"))
+        b.handle(msg(42, "deploy production"))
+        jid = db.list_jobs()[0]["id"]
+        self.assertEqual(db.get_job(jid)["plan"] and json.loads(db.get_job(jid)["plan"])["level"], 3)
+        labels = [x["text"] for row in sent[-1][1]["reply_markup"]["inline_keyboard"] for x in row]
+        self.assertIn("Xác nhận duyệt ⚠️", labels)
+        b.handle(cb(42, f"/approve {jid}"))
+        self.assertEqual(db.get_job(jid)["status"], "AWAITING_APPROVAL")
 
     def test_cost_is_unknown(self):
         b, db, sent = mk()

@@ -26,3 +26,13 @@
 - API chỉ bind 127.0.0.1.
 - Không ghi `.env`, token hay credential vào log; `.env` đã nằm trong `.gitignore`.
 - Yêu cầu có từ khóa rủi ro (xóa, production, token, quản trị) được gắn cấp quyền 3 để phải duyệt.
+
+## Chạy Telegram trên máy của bạn (chế độ thật)
+Sandbox của hệ thống không kết nối được api.telegram.org (proxy chặn), nên bot phải chạy trên máy của bạn:
+1. Lấy user ID số của bạn từ @userinfobot trên Telegram.
+2. Mở `.env` (tạo từ `.env.example`), điền `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS=<user ID>`, `MOCK_MODE=false`.
+3. Chạy `python main.py`. Dòng đầu phải báo "Telegram: đang lắng nghe".
+4. Mở chat với bot và gửi yêu cầu bằng tiếng Việt. Bot sẽ lập kế hoạch và hiện nút Duyệt hoặc Hủy.
+5. Dự án phải được thêm trước trong giao diện desktop (hoặc chỉ có một dự án thì bot tự chọn).
+
+Nếu token đã gửi trong khung chat, hãy thu hồi và tạo token mới bằng /revoke trong @BotFather, rồi cập nhật `.env`.
