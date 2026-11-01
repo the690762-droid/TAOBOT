@@ -1,5 +1,5 @@
 @echo off
-rem Cài đặt và chạy Ryan AI Command Center trên Windows. Chạy lại an toàn: bước đã xong sẽ được bỏ qua.
+rem Cai dat va chay Ryan AI Command Center tren Windows. Chay lai an toan: buoc da xong se duoc bo qua.
 setlocal EnableExtensions
 cd /d "%~dp0"
 title Ryan AI Command Center - Cai dat
